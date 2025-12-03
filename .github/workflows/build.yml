@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,32 +18,50 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install system packages
+      - name: Install system packages (apt)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip unzip openjdk-17-jdk \
-            libncurses5-dev libssl-dev libsqlite3-dev libffi-dev
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            python3-pip python3-venv python3-dev build-essential \
+            openjdk-17-jdk curl unzip zip git wget \
+            libncurses5-dev libssl-dev libsqlite3-dev libffi-dev libbz2-dev liblzma-dev
 
-      - name: Install buildozer and dependencies
+      - name: Upgrade pip and install python deps
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade virtualenv
-          python3 -m pip install buildozer==2.0.0
+          python3 -m pip install --upgrade pip setuptools wheel
+          # Cython usually required for some python-for-android modules
+          python3 -m pip install cython==0.29.36 virtualenv
+
+      - name: Install buildozer (stable on PyPI)
+        run: |
+          # Use the latest stable Buildozer available on PyPI (1.5.0 is widely used)
+          python3 -m pip install buildozer==1.5.0
+          # optional: python-for-android dependencies (will be downloaded during build)
+          python3 -m pip show buildozer
+
+      - name: Show env & versions (debug)
+        run: |
+          echo "WORKDIR: $(pwd)"
+          python3 --version
+          pip --version
+          java -version || true
+          buildozer --version || true
 
       - name: Run buildozer (android debug)
+        env:
+          # optional: override to avoid interactive prompts (if any)
+          P4A_BOOTSTRAP: sdl2
         run: |
-          # show versions
-          python3 --version
-          buildozer --version || true
-          # run build (will produce logs)
+          # run build (this produces large logs)
+          # If you want a faster first try, set target to 'android debug' as below
           buildozer -v android debug
 
       - name: Show generated files (debug)
         run: |
           echo "PWD: $(pwd)"
-          echo "List top-level:"
+          echo "Top-level:"
           ls -la
-          echo "Find apk or aab files:"
+          echo "Look for apk/aab in common locations:"
           find . -type f \( -iname "*.apk" -o -iname "*.aab" \) -print || true
 
       - name: Upload package artifact (if any)
@@ -49,4 +69,7 @@ jobs:
         with:
           name: app-package
           path: |
-            $(find . -type f -iname "*.apk" -o -iname "*.aab" || true)
+            bin/*.apk
+            bin/*.aab
+            **/bin/*.apk
+            **/bin/*.aab

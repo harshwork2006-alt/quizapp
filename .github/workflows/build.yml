@@ -8,18 +8,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    #---------------- CHECKOUT ----------------#
     - name: Checkout
       uses: actions/checkout@v4
 
-    #---------------- JAVA ----------------#
     - name: Set up JDK
       uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: "17"
 
-    #---------------- SYSTEM PACKAGES ----------------#
     - name: Install system dependencies
       run: |
         sudo dpkg --add-architecture i386
@@ -33,11 +30,10 @@ jobs:
           curl \
           libssl-dev \
           libffi-dev \
-          libncurses5 \
           libncurses5-dev \
+          libncurses6 \
           zlib1g-dev
 
-    #---------------- ANDROID SDK ----------------#
     - name: Install Android SDK + Commandline Tools
       run: |
         export ANDROID_HOME=$HOME/android-sdk
@@ -54,7 +50,6 @@ jobs:
         echo "export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH" >> $GITHUB_ENV
         echo "export PATH=$ANDROID_HOME/platform-tools:$PATH" >> $GITHUB_ENV
 
-    #---------------- ACCEPT LICENSES ----------------#
     - name: Accept Android licenses
       run: |
         export ANDROID_HOME=$HOME/android-sdk
@@ -62,26 +57,22 @@ jobs:
         $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --update
         $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
-    #---------------- INSTALL BUILDOZER ----------------#
     - name: Install Buildozer + Dependencies
       run: |
         python3 -m pip install --upgrade pip setuptools wheel Cython virtualenv
         python3 -m pip install buildozer==1.5.0
 
-    #---------------- RUN BUILDOZER ----------------#
     - name: Run Buildozer (Android Debug)
       run: |
         export ANDROID_HOME=$HOME/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         buildozer -v android debug
 
-    #---------------- FIND APK ----------------#
     - name: Show generated files
       run: |
         echo "APK Files Found:"
         find . -type f -iname "*.apk" -print || echo "No APK Found!"
 
-    #---------------- UPLOAD ARTIFACT ----------------#
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:

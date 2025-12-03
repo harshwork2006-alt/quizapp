@@ -1,0 +1,52 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip unzip openjdk-17-jdk \
+            libncurses5-dev libssl-dev libsqlite3-dev libffi-dev
+
+      - name: Install buildozer and dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade virtualenv
+          python3 -m pip install buildozer==2.0.0
+
+      - name: Run buildozer (android debug)
+        run: |
+          # show versions
+          python3 --version
+          buildozer --version || true
+          # run build (will produce logs)
+          buildozer -v android debug
+
+      - name: Show generated files (debug)
+        run: |
+          echo "PWD: $(pwd)"
+          echo "List top-level:"
+          ls -la
+          echo "Find apk or aab files:"
+          find . -type f \( -iname "*.apk" -o -iname "*.aab" \) -print || true
+
+      - name: Upload package artifact (if any)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-package
+          path: |
+            $(find . -type f -iname "*.apk" -o -iname "*.aab" || true)

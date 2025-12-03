@@ -6,7 +6,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    env:
+      # Where SDK will be installed in the runner
+      ANDROID_HOME: ${{ runner.workspace }}/android-sdk
+      # prevent interactive prompts
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
       - name: Checkout
@@ -18,47 +22,98 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install system dependencies
+      - name: Install system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3-pip python3-venv python3-dev \
-            build-essential git unzip zip curl \
-            libffi-dev libssl-dev libncurses-dev
+          sudo apt-get update -y
+          sudo apt-get install -y python3-pip python3-venv unzip curl git \
+            openjdk-17-jdk libncurses5-dev libssl-dev libsqlite3-dev libffi-dev build-essential
 
-      - name: Install Android SDK + Accept licenses
-        run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          mkdir -p $ANDROID_HOME/cmdline-tools/latest
-
-          cd $ANDROID_HOME/cmdline-tools/latest
-          curl -o sdk-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
-          unzip sdk-tools.zip
-          rm sdk-tools.zip
-
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-
-          yes | sdkmanager --licenses
-          sdkmanager --update
-          sdkmanager "platform-tools" "build-tools;36.0.1" "platforms;android-33"
-
-      - name: Install Buildozer
+      - name: Install buildozer + python deps
         run: |
           python3 -m pip install --upgrade pip setuptools wheel
-          python3 -m pip install cython
-          python3 -m pip install buildozer==1.5.0
+          # install a release of buildozer that exists on PyPI (1.5.0 is available)
+          python3 -m pip install "buildozer==1.5.0" cython==0.29.* virtualenv
 
-      - name: Build APK
-        env:
-          ANDROID_HOME: $HOME/android-sdk
-          PATH: $HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$PATH
+      - name: Install Android SDK commandline tools + accept licenses
         run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          mkdir -p "$ANDROID_HOME"
+          cd "$ANDROID_HOME"
+
+          # Download the latest command line tools zip (Linux)
+          TOOL_URL="https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip"
+          curl -sSL -o cmdline.zip "$TOOL_URL"
+
+          # extract to temp dir and normalize layout to cmdline-tools/latest
+          mkdir -p tmp_cmdline
+          unzip -q cmdline.zip -d tmp_cmdline
+          rm cmdline.zip
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          # handle multiple possible zip structures
+          if [ -d tmp_cmdline/cmdline-tools ]; then
+            mv tmp_cmdline/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          else
+            # try to find the top directory inside tmp_cmdline
+            topdir=$(find tmp_cmdline -maxdepth 1 -mindepth 1 -type d | head -n 1 || true)
+            if [ -n "$topdir" ]; then
+              mv "$topdir" "$ANDROID_HOME/cmdline-tools/latest"
+            else
+              # fallback: move entire tmp_cmdline contents into latest
+              mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+              mv tmp_cmdline/* "$ANDROID_HOME/cmdline-tools/latest/" || true
+            fi
+          fi
+          rm -rf tmp_cmdline || true
+
+          # ensure sdkmanager exists and is executable
+          CHOSEN="$ANDROID_HOME/cmdline-tools/latest/bin"
+          chmod +x "$CHOSEN"/* || true
+          export PATH="$CHOSEN:$ANDROID_HOME/platform-tools:$PATH"
+          echo "PATH set to: $PATH"
+
+          # ensure we can run sdkmanager; update and accept licenses
+          yes | sdkmanager --licenses || true
+          sdkmanager --update
+          # install minimal required components (build-tools and platform)
+          sdkmanager "platform-tools" "build-tools;36.0.1" "platforms;android-33"
+
+      - name: Show environment debug
+        run: |
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "Which sdkmanager: $(which sdkmanager || true)"
+          sdkmanager --version || true
+          echo "Which buildozer: $(which buildozer || true)"
+          buildozer --version || true
+
+      - name: Run buildozer (android debug)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          # buildozer writes files in current directory; ensure buildozer.spec exists
+          if [ ! -f buildozer.spec ]; then
+            echo "ERROR: buildozer.spec not found in repo root. Add your buildozer.spec and re-run."
+            exit 2
+          fi
+
+          # Make a local buildozer userdir to avoid permission issues
+          export ANDROID_HOME="$ANDROID_HOME"
+          # Run buildozer; keep verbose logs
           buildozer -v android debug
 
-      - name: Upload APK
+      - name: Show generated files (debug)
+        run: |
+          echo "PWD: $(pwd)"
+          echo "Top-level files:"
+          ls -la
+          echo "Search for apk/aab in project:"
+          find . -type f \( -iname "*.apk" -o -iname "*.aab" \) -print || true
+
+      - name: Upload package artifact (if any)
         uses: actions/upload-artifact@v4
         with:
-          name: quizapp-apk
+          name: app-package
           path: |
-            bin/*.apk
-            **/bin/*.apk
+            $(find . -type f -iname "*.apk" -o -iname "*.aab" || true)

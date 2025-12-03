@@ -23,39 +23,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             python3-pip python3-venv python3-dev \
-            build-essential git unzip zip curl libncurses5 libffi-dev
+            build-essential git unzip zip curl \
+            libffi-dev libssl-dev libncurses-dev
 
       - name: Install Android SDK + Accept licenses
         run: |
           mkdir -p $HOME/android-sdk
           cd $HOME/android-sdk
-          
-          # Download SDK Tools
+
           curl -o sdk-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
           unzip sdk-tools.zip -d cmdline-tools
-          
+
           mkdir -p cmdline-tools/latest
           mv cmdline-tools/* cmdline-tools/latest/
-          
+
           export ANDROID_HOME=$HOME/android-sdk
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
           export PATH=$ANDROID_HOME/platform-tools:$PATH
-          
+
           yes | sdkmanager --licenses
           sdkmanager --update
-          
-          # Install required components
           sdkmanager "platform-tools" "build-tools;36.0.1" "platforms;android-33"
 
       - name: Install Buildozer
         run: |
           python3 -m pip install --upgrade pip setuptools wheel
-          python3 -m pip install cython buildozer==1.5.0
-
-      - name: Show versions
-        run: |
-          python3 --version
-          buildozer --version || true
+          python3 -m pip install cython
+          python3 -m pip install buildozer==1.5.0
 
       - name: Build APK
         env:

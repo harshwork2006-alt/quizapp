@@ -6,76 +6,85 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: ${{ runner.home }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ runner.home }}/android-sdk
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up JDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: "17"
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-    - name: Install system dependencies
-      run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get update
-        sudo apt-get install -y \
-          python3-pip \
-          python3-setuptools \
-          python3-wheel \
-          unzip \
-          zip \
-          curl \
-          libssl-dev \
-          libffi-dev \
-          libncurses5-dev \
-          libncurses6 \
-          zlib1g-dev
+      - name: Install linux deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl unzip zip python3-pip python3-setuptools python3-wheel \
+            libssl-dev libffi-dev libncurses5-dev zlib1g-dev
 
-    - name: Install Android SDK + Commandline Tools
-      run: |
-        export ANDROID_HOME=$HOME/android-sdk
-        mkdir -p $ANDROID_HOME/cmdline-tools
+      - name: Install Android commandline tools
+        run: |
+          set -e
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+          cd $ANDROID_SDK_ROOT/cmdline-tools
+          # download latest commandlinetools (link may be updated by Google later)
+          curl -s -L -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools.zip
+          rm commandlinetools.zip
+          # Google zips into 'cmdline-tools' folder; ensure layout $SDK/cmdline-tools/latest/...
+          if [ -d cmdline-tools ]; then
+            mv cmdline-tools latest || true
+          fi
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
 
-        cd $ANDROID_HOME/cmdline-tools
-        curl -o tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip tools.zip
-        rm tools.zip
+      - name: Install Android SDK tools + accept licenses
+        run: |
+          set -e
+          export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list
+          # Accept licenses non-interactively
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+          # Install platform-tools, platforms and build-tools (33.0.2 is stable for many builds)
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          # (Optional) also install a more recent build-tools if you want:
+          # sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "build-tools;36.1.0"
 
-        mv cmdline-tools latest
+      - name: Install Python deps + Buildozer
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel virtualenv
+          # Use a supported buildozer version (1.5.0 works)
+          python3 -m pip install buildozer==1.5.0
 
-        echo "export ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-        echo "export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH" >> $GITHUB_ENV
-        echo "export PATH=$ANDROID_HOME/platform-tools:$PATH" >> $GITHUB_ENV
+      - name: Show env and android tools
+        run: |
+          echo "ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
+          which sdkmanager || true
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list | sed -n '1,120p' || true
+          ls -la $ANDROID_SDK_ROOT || true
+          ls -la $ANDROID_SDK_ROOT/cmdline-tools || true
+          ls -la $ANDROID_SDK_ROOT/platform-tools || true
 
-    - name: Accept Android licenses
-      run: |
-        export ANDROID_HOME=$HOME/android-sdk
-        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --update
-        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+      - name: Run buildozer (android debug)
+        run: |
+          set -e
+          export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          buildozer -v android debug
 
-    - name: Install Buildozer + Dependencies
-      run: |
-        python3 -m pip install --upgrade pip setuptools wheel Cython virtualenv
-        python3 -m pip install buildozer==1.5.0
+      - name: Find artifacts
+        run: |
+          echo "Find apk/aab:"
+          find . -type f -iname "*.apk" -o -iname "*.aab" -print || echo "No APK/AAB found"
 
-    - name: Run Buildozer (Android Debug)
-      run: |
-        export ANDROID_HOME=$HOME/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-        buildozer -v android debug
-
-    - name: Show generated files
-      run: |
-        echo "APK Files Found:"
-        find . -type f -iname "*.apk" -print || echo "No APK Found!"
-
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: quizapp-apk
-        path: |
-          **/*.apk
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quizapp-apk
+          path: |
+            **/*.apk

@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -18,58 +18,56 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install system packages (apt)
+      - name: Install system dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            python3-pip python3-venv python3-dev build-essential \
-            openjdk-17-jdk curl unzip zip git wget \
-            libncurses5-dev libssl-dev libsqlite3-dev libffi-dev libbz2-dev liblzma-dev
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-venv python3-dev \
+            build-essential git unzip zip curl libncurses5 libffi-dev
 
-      - name: Upgrade pip and install python deps
+      - name: Install Android SDK + Accept licenses
+        run: |
+          mkdir -p $HOME/android-sdk
+          cd $HOME/android-sdk
+          
+          # Download SDK Tools
+          curl -o sdk-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+          unzip sdk-tools.zip -d cmdline-tools
+          
+          mkdir -p cmdline-tools/latest
+          mv cmdline-tools/* cmdline-tools/latest/
+          
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          export PATH=$ANDROID_HOME/platform-tools:$PATH
+          
+          yes | sdkmanager --licenses
+          sdkmanager --update
+          
+          # Install required components
+          sdkmanager "platform-tools" "build-tools;36.0.1" "platforms;android-33"
+
+      - name: Install Buildozer
         run: |
           python3 -m pip install --upgrade pip setuptools wheel
-          # Cython usually required for some python-for-android modules
-          python3 -m pip install cython==0.29.36 virtualenv
+          python3 -m pip install cython buildozer==1.5.0
 
-      - name: Install buildozer (stable on PyPI)
+      - name: Show versions
         run: |
-          # Use the latest stable Buildozer available on PyPI (1.5.0 is widely used)
-          python3 -m pip install buildozer==1.5.0
-          # optional: python-for-android dependencies (will be downloaded during build)
-          python3 -m pip show buildozer
-
-      - name: Show env & versions (debug)
-        run: |
-          echo "WORKDIR: $(pwd)"
           python3 --version
-          pip --version
-          java -version || true
           buildozer --version || true
 
-      - name: Run buildozer (android debug)
+      - name: Build APK
         env:
-          # optional: override to avoid interactive prompts (if any)
-          P4A_BOOTSTRAP: sdl2
+          ANDROID_HOME: $HOME/android-sdk
+          PATH: $HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$PATH
         run: |
-          # run build (this produces large logs)
-          # If you want a faster first try, set target to 'android debug' as below
           buildozer -v android debug
 
-      - name: Show generated files (debug)
-        run: |
-          echo "PWD: $(pwd)"
-          echo "Top-level:"
-          ls -la
-          echo "Look for apk/aab in common locations:"
-          find . -type f \( -iname "*.apk" -o -iname "*.aab" \) -print || true
-
-      - name: Upload package artifact (if any)
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-package
+          name: quizapp-apk
           path: |
             bin/*.apk
-            bin/*.aab
             **/bin/*.apk
-            **/bin/*.aab

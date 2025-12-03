@@ -7,80 +7,99 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      ANDROID_HOME: ${{ runner.home }}/android-sdk
+      # SDK paths inside runner home
       ANDROID_SDK_ROOT: ${{ runner.home }}/android-sdk
+      ANDROID_HOME: ${{ runner.home }}/android-sdk
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup JDK
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Install linux deps
+      - name: Install system packages
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y curl unzip zip python3-pip python3-setuptools python3-wheel \
-            libssl-dev libffi-dev libncurses5-dev zlib1g-dev
+          sudo apt-get install -y curl unzip zip git python3-pip python3-setuptools python3-wheel \
+            libssl-dev libffi-dev zlib1g-dev libncurses5-dev
 
-      - name: Install Android commandline tools
+      - name: Prepare Android cmdline-tools
         run: |
           set -e
+          echo "SDK root: $ANDROID_SDK_ROOT"
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
           cd $ANDROID_SDK_ROOT/cmdline-tools
-          # download latest commandlinetools (link may be updated by Google later)
-          curl -s -L -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q commandlinetools.zip
-          rm commandlinetools.zip
-          # Google zips into 'cmdline-tools' folder; ensure layout $SDK/cmdline-tools/latest/...
-          if [ -d cmdline-tools ]; then
-            mv cmdline-tools latest || true
+          # download commandlinetools; if link becomes invalid update with latest from Android site
+          CMD_ZIP=commandlinetools-linux-11076708_latest.zip
+          curl -sSL -o $CMD_ZIP https://dl.google.com/android/repository/$CMD_ZIP
+          unzip -q $CMD_ZIP -d tmp_cmdline
+          rm -f $CMD_ZIP
+          # Ensure layout: $SDK/cmdline-tools/latest/bin/...
+          mkdir -p latest
+          # tmp_cmdline may contain a folder named 'cmdline-tools', or files directly.
+          if [ -d tmp_cmdline/cmdline-tools ]; then
+            mv tmp_cmdline/cmdline-tools/* latest/ || true
+          else
+            mv tmp_cmdline/* latest/ || true
           fi
+          rm -rf tmp_cmdline
+          # make sure bin is executable
+          chmod +x $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/*
+          echo "Added cmdline-tools to PATH"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
 
-      - name: Install Android SDK tools + accept licenses
+      - name: Install Android SDK packages + accept licenses
         run: |
           set -e
           export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list
-          # Accept licenses non-interactively
+          sleep 1
+          which sdkmanager || { echo "sdkmanager not found — listing cmdline-tools"; ls -la $ANDROID_SDK_ROOT/cmdline-tools; exit 1; }
+          # Update and accept licenses
           yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-          # Install platform-tools, platforms and build-tools (33.0.2 is stable for many builds)
+          # Install essentials (platform-tools, platform 33 and build-tools 33.0.2)
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-          # (Optional) also install a more recent build-tools if you want:
-          # sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "build-tools;36.1.0"
 
-      - name: Install Python deps + Buildozer
+      - name: Install Buildozer and Python deps
         run: |
+          set -e
           python3 -m pip install --upgrade pip setuptools wheel virtualenv
-          # Use a supported buildozer version (1.5.0 works)
+          # 1.5.0 is widely used; change only if you have tested newer version
           python3 -m pip install buildozer==1.5.0
+          # some projects need cython — install if your app needs it
+          python3 -m pip install Cython || true
 
-      - name: Show env and android tools
+      - name: Debug: show sdk layout & versions
         run: |
-          echo "ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
-          which sdkmanager || true
+          set -e
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+          echo "PATH: $PATH"
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list | sed -n '1,120p' || true
           ls -la $ANDROID_SDK_ROOT || true
           ls -la $ANDROID_SDK_ROOT/cmdline-tools || true
           ls -la $ANDROID_SDK_ROOT/platform-tools || true
+          echo "Buildozer version:"
+          buildozer --version || true
 
-      - name: Run buildozer (android debug)
+      - name: Run Buildozer (android debug)
         run: |
           set -e
           export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          # If your buildozer.spec is not at repo root, cd into folder first
+          # cd path/to/project
           buildozer -v android debug
 
-      - name: Find artifacts
+      - name: Find apk and upload
         run: |
-          echo "Find apk/aab:"
-          find . -type f -iname "*.apk" -o -iname "*.aab" -print || echo "No APK/AAB found"
+          echo "Searching for artifacts..."
+          find . -type f -iname "*.apk" -o -iname "*.aab" -print || echo "No apk/aab found"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
